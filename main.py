@@ -1,12 +1,22 @@
 from kivy.app import App
+from kivy.clock import Clock
 from kivy.uix.screenmanager import ScreenManager, Screen
+from kivy.uix.popup import Popup
+from kivy.uix.gridlayout import GridLayout
+from kivy.uix.label import Label
+
 from threading import Thread
 import time
 import pandas as pd
 import serial
 from inputButton import inputButton
 from ProcessScreen import ProcessScreen
+from FileSelect import FileSelectScreen
+from Maintenance_Screen import Maintenance_Screen
+
 from SettingsScreen import SettingsScreen
+from Load_Sample_PopUp_Menu import LoadSamplePopUpLogic
+
 #Equipment
 from Valve import Valve,gateValveOnly,MKS153D
 from ArduinoMegaPLC import ArduinoMegaPLC
@@ -14,11 +24,43 @@ from ArduinoMegaPLC import ArduinoMegaPLC
 from Motor_Control import ArduinoMotor
 from startStopSpeedMotor import startStopArduinoMotor
 
-from RFGenerator import RFX600
+from RFGenerator import RFX600,TCPowerRFGenrator
 from Baratron import valveBaratron,analogBaratron
-from MassFlowController import HoribaZ500,HoribaLF_F
+from MassFlowController import HoribaZ500,HoribaLF_F, AnalogMFC
 
 #Config.set('graphics','fullscreen','auto')
+sm = ScreenManager()
+
+class loadingPopUp(Popup):
+    def __init__(self,PLC, MotorController, ParameterDictionary,**kwargs):
+        super(loadingPopUp,self).__init__(**kwargs)
+        self.PLC = PLC
+        self.MotorController = MotorController
+        self.ParameterDictionary = ParameterDictionary
+
+        self.stepGrid = GridLayout(rows = 10)
+
+        self.content = self.stepGrid
+
+    def on_open(self):
+        self.loadSample()
+
+    def loadSample(self):
+        print('loading Sample')
+        #Open the gate
+        self.PLC.relayCurrent[self.ParameterDictionary['Pins Down']] = '1' #lowering lift pins
+        self.PLC.relayCurrent[self.ParameterDictionary['Pins Down']] = '0'
+        self.PLC.relayCurrent[self.ParameterDictionary['Gate Close']] = '1' #closing the gate
+        self.PLC.relayCurrent[self.ParameterDictionary['Gate Open']] = '0'
+        self.PLC.updateRelayBank()
+        time.sleep(1)
+        self.stepGrid.add_widget(Label(text = 'Opening Gate...'))
+        self.PLC.relayCurrent[self.ParameterDictionary['Gate Open']] = '1'
+        self.PLC.updateRelayBank()
+        time.sleep(0.1)
+        self.PLC.relayCurrent[self.ParameterDictionary['Gate Close']] = '0'
+        self.PLC.updateRelayBank()
+        self.stepGrid.add_widget(Label(text = 'Translating State'))
 
 def Create_Thread(function, *args):
     new_thread = Thread(target = function, args = (args))
@@ -31,9 +73,9 @@ def Return_Thread(function, *args):
 ParameterDictionary = {'title list':['a','a','a','a','a','a','a','a'],
                        'valveOpen':False,'valveStateChange':False, 'valveBusy':False,
                        'motorOn':False,'motorStateChange':False,'loopNumber':'0','RFOn':False,'RFStateChange':False,
-                       'pressureSetCurrent': '0', 'bottomChamberPressure':'0',
+                       'pressureSetCurrent': '0', 'bottomChamberPressure':'0','isoOpen':False,
                        'silaneOn': False,'silaneStateChange':False,
-                       'ventOn':False,'ventStateChange':False, 'lidOpen':False,'lidStateChange':False,
+                       'ventOn':False,'ventStateChange':False, 'isVented':True, 'lidOpen':False,'lidStateChange':False, 'isoStateChange':False,
                        'stageHomed':False,'homeStateChange':True,
                        '1ReactorPressure':'0','ADC1read':'0','ADC2read':'0','ADC3read':'0',
                        'gasOn':False, 'gasStateChange':False,
@@ -48,8 +90,34 @@ ParameterDictionary = {'title list':['a','a','a','a','a','a','a','a'],
                        'pneumaticStateChange':False, 'pneumaticSetCurret':'<2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1>',
                        'RF1On':False, 'RF1SetCurrent':'0', 'RF1StateChange':False,
                        'RF2On':False, 'RF2SetCurrent':'0', 'RF2StateChange':False,
-                       'encoderPostion':'0','Vent Channel':''}
+                       'encoderPostion':'0','Vent Channel':'',
+                       'new recipe':False,'recipe':'','save recipe':False,
+                       'sheet_ID':'1KfwftgVLMEHyujG-p6m1Kvqw07hqFSUgQVP4ldVyrN8',
+                       'sheet':-1}
 
+
+def loadRecipe(RecipeFilePath,FieldList,StaticFieldList):
+    DF = pd.read_csv(RecipeFilePath)
+
+    for row in DF.iterrows():
+        slot = row[1]['Slot']
+        desc = row[1]['Des']
+        val = row[1]['Val']
+        type = row[1]['Type']
+        if val == val:
+            if type == 'P':
+                FieldList[slot].setSetValue(str(val))
+                print(slot,val,desc)
+            if type == 'M':
+                val = '{:.0f}'.format(float(val))
+
+                StaticFieldList[slot].setSetValue(str(val))
+
+
+def MFCcurrentRead(MFCList):
+    while True:
+        for m in MFCList:
+            m.read()
 
 
 
@@ -67,8 +135,26 @@ class goBetween():
         self.ParameterDictionary = ParameterDictionary
         self.programRunning = False
 
-        self.stateDictionary = {0:self.state0,1:self.state1,2:self.state2,3:self.state3,-1:self.stateA}
+        self.stateDictionary = {0:self.state0,1:self.state1,2:self.state2,3:self.state3,-1:self.stateA,-2:self.stateB}
         self.currentState = 0
+        self.previousState = self.currentState
+
+        self.processScreen.loadSampleButton.bind(on_press = lambda  x: self.loadSample())
+
+        #######initializing the Pneumatics##########3
+        #self.PLC.relayCurrent[self.ParameterDictionary['Gate Close']] = '1' #closing the gate
+        self.PLC.relayCurrent[self.ParameterDictionary['Gate Open']] = '0'
+
+        #self.PLC.relayCurrent[self.ParameterDictionary['Pins Down']] = '1' #lowering lift pins
+        self.PLC.relayCurrent[self.ParameterDictionary['Pins Up']] = '0'
+        self.PLC.updateRelayBank()
+
+    def loadSample(self):
+        self.previousState = self.currentState #log so we can send it back
+        self.currentState = -2
+        #sm.current = 'Load'
+        sm.current = 'file selection'
+
     def run(self):
         self.programRunning = True
         Create_Thread(self.updating)
@@ -79,6 +165,11 @@ class goBetween():
         self.processScreen.addStateButton('start')
         while self.programRunning:
             self.stateDictionary[self.currentState]()
+
+    def stateB(self):
+        while self.programRunning and self.currentState == -2:
+            if sm.current == 'main':
+                self.currentState = self.previousState
 
     def stateA(self):
         print('state A')
@@ -113,6 +204,12 @@ class goBetween():
         print('state 0')
         self.processScreen.addStateButton('vent')
 
+        self.ParameterDictionary['isoOpen'] = False
+        self.PLC.relayCurrent[self.ParameterDictionary['ISO Channel']] = '0'
+        self.PLC.updateRelayBank()
+        self.processScreen.isobutton.b.state = 'normal'
+
+
         while self.programRunning and self.currentState == 0:
             self.getReadAndUpdateLabels()
             self.motorProcesses()
@@ -140,12 +237,15 @@ class goBetween():
     def state1(self):
         print("state 1")
 
+        self.processScreen.addStateButton('pressureISO')
         self.processScreen.addStateButton('gas')
 
         while self.programRunning and self.currentState == 1:
             self.getReadAndUpdateLabels()
             self.motorProcesses()
             self.updateGrinder()
+            self.updatePressure()
+            self.pressureIso()
 
             #reverse condition
             if self.ParameterDictionary['valveStateChange']: #was the valve button clicked?
@@ -153,6 +253,7 @@ class goBetween():
                 self.valveStateChange() #lauch the function associated with the click
                 if not self.ParameterDictionary['valveOpen']:
                     self.processScreen.removeStateButton('gas')
+                    self.processScreen.removeStateButton('pressureISO')
                     self.currentState = 0
             #foward condition
             if self.ParameterDictionary['gasStateChange']:
@@ -173,6 +274,8 @@ class goBetween():
             self.updateMFCSetpoints()
             self.motorProcesses()
             self.updateGrinder()
+            self.updatePressure()
+            self.pressureIso()
 
             #reverse condition
             if self.ParameterDictionary['gasStateChange']:
@@ -201,6 +304,8 @@ class goBetween():
             self.updateRFGenSetpoints()
             self.motorProcesses()
             self.updateGrinder()
+            self.updatePressure()
+            self.pressureIso()
 
             #reverse condition
             if self.ParameterDictionary['RFStateChange']:
@@ -209,6 +314,41 @@ class goBetween():
                     self.processScreen.addStateButton('gas')
                     self.turnOffRFGen()
                     self.currentState = 2
+
+    def pressureIso(self):
+        if self.ParameterDictionary['isoStateChange']: #if the button was pressed
+            if self.ParameterDictionary['isoOpen']: #if it is already open
+                self.PLC.relayCurrent[self.ParameterDictionary['ISO Channel']] = '1' #close it
+                self.PLC.updateRelayBank() #update the pneumatics
+                self.ParameterDictionary['isoOpen'] = False #update the parameter dictionary
+
+            else:
+                self.PLC.relayCurrent[self.ParameterDictionary['ISO Channel']] = '0'
+                self.PLC.updateRelayBank()
+                self.ParameterDictionary['isoOpen'] = True #update the parameter dictionary
+
+            self.ParameterDictionary['isoStateChange'] = False
+        else:
+            pass
+
+    def updatePressure(self):
+        slot = self.BaratronList[1].slot
+        field = self.inputFieldList[slot]
+
+        current_pressure_set = float(field.getSetValue())
+
+        if self.currentState >=2:
+            if float(self.gateValve.pressure_set_point) != current_pressure_set:
+                self.gateValve.setPressure(slot,current_pressure_set)
+                self.gateValve.controlling = True
+        else:
+            if self.gateValve.controlling:
+                self.gateValve.Open()
+                self.gateValve.pressure_set_point = 0
+                self.gateValve.controlling = False
+
+
+        #print(field.getSetValue())
 
     def getReadAndUpdateLabels(self):
         def MFCcurrentRead():
@@ -246,6 +386,16 @@ class goBetween():
         for r in self.RFGeneratorList:
             field = self.inputFieldList[r.slot]
             field.setReadLabel(r.read())
+
+        '''if self.ParameterDictionary['new recipe']:
+            loadRecipe(self.ParameterDictionary['recipe'], self.inputFieldList,self.processScreen.staticFieldList)
+            self.ParameterDictionary['new recipe'] = False'''
+
+        '''for f in self.inputFieldList:
+            print(f.getTitle(), f.getSetValue())
+        
+        for f in self.processScreen.staticFieldList:
+            print(f.getTitle(), f.getSetValue())'''
 
     def updateMFCSetpoints(self):
         for m in MFCList:
@@ -290,8 +440,11 @@ class goBetween():
                 pass
 
     def turnOnRFGen(self):
-        for R in self.RFGeneratorList:
-            R.turnOn()
+        for r in self.RFGeneratorList:
+            currentSet = self.inputFieldList[r.slot].getSetValue()
+
+            if not r.on and float(r.currentSet) > 0:
+                r.turnOn()
 
     def turnOffRFGen(self):
         for R in self.RFGeneratorList:
@@ -299,7 +452,9 @@ class goBetween():
 
     def readyForVacuum(self):
         #turn off the vent
-        self.PLC.relayCurrent[self.ParameterDictionary['Vent Channel']] = '1'
+        self.PLC.relayCurrent[self.ParameterDictionary['Vent Channel']] = '0'
+
+
         self.PLC.updateRelayBank()
         self.ParameterDictionary['ventOn'] = False
         self.processScreen.ventButton.b.state = 'normal'
@@ -308,36 +463,55 @@ class goBetween():
         def softOpen():
             #this stops the computer from asking the valve for pressure readings during soft open
             self.ParameterDictionary['valveBusy'] = True
+            self.processScreen.vacuumbutton.b.text = 'Wait! Pumping...'
             self.gateValve.softOpen()
             self.ParameterDictionary['valveBusy'] = False
+            self.processScreen.vacuumbutton.b.text = 'Vacuum is OPEN'
 
         def Open():
             #this stops the computer from asking the valve for pressure readings during soft open
             self.ParameterDictionary['valveBusy'] = True
             self.gateValve.Open()
             self.ParameterDictionary['valveBusy'] = False
+            self.processScreen.vacuumbutton.b.text = 'Vacuum is OPEN'
 
         if self.ParameterDictionary['valveOpen']: #If the button press activates the valve
             #need a way of identifying which baratron to use...
-            if float(self.BaratronList[0].currentRead) > float(self.BaratronList[0].max): #soft open condition
-                Create_Thread(softOpen,)
-                #Open() #this is a thread for certain types of gate valves
-            else: #regular open condition
-                #Create_Thread(Open,)
-                Open() #thi
 
+            if 'Gate Valve' in self.ParameterDictionary.keys():#opening up a gate valve
+                print('GV!!!!!!!!!!')
+                self.PLC.relayCurrent[self.ParameterDictionary['Gate Valve']] = '1'
+                self.PLC.relayCurrent[self.ParameterDictionary['Gate Valve Close']] = '0'
+                self.PLC.updateRelayBank()
+
+            if self.ParameterDictionary['isVented']:
+                Create_Thread(softOpen, )
+                self.ParameterDictionary['isVented'] = False
+            else:
+                Open()
+                self.ParameterDictionary['isVented'] = False
 
         else: #if the button click is intented to close the valve.
+
+            if 'Gate Valve' in self.ParameterDictionary.keys():#opening up a gate valve
+                print('GV Close!!!!!!!!!!')
+                self.PLC.relayCurrent[self.ParameterDictionary['Gate Valve']] = '0'
+                self.PLC.relayCurrent[self.ParameterDictionary['Gate Valve Close']] = '1'
+                self.PLC.updateRelayBank()
+
             self.gateValve.interrupt = True #stops the soft pump routine if it's in
             self.gateValve.Close()
+            self.processScreen.vacuumbutton.b.text = 'Vacuum is CLOSED\n      Press to open'
 
     def ventStateChange(self):
         if self.ParameterDictionary['ventOn']:
-            self.PLC.relayCurrent[self.ParameterDictionary['Vent Channel']] = '0'
+            self.PLC.relayCurrent[self.ParameterDictionary['Vent Channel']] = '1'
+
+            self.ParameterDictionary['isVented'] = True
             self.PLC.updateRelayBank()
 
         else:
-            self.PLC.relayCurrent[self.ParameterDictionary['Vent Channel']] = '1'
+            self.PLC.relayCurrent[self.ParameterDictionary['Vent Channel']] = '0'
             self.PLC.updateRelayBank()
 
     def motorProcesses(self):
@@ -374,17 +548,17 @@ class goBetween():
     def openCloseLid(self):
         #if we are opening the lid
         if self.ParameterDictionary['lidOpen']:
-            self.PLC.relayCurrent[self.ParameterDictionary['Open Channel']] = '0'
+            self.PLC.relayCurrent[self.ParameterDictionary['Open Channel']] = '1'
             try:
-                self.PLC.relayCurrent[self.ParameterDictionary['Close Channel']] = '1'
+                self.PLC.relayCurrent[self.ParameterDictionary['Close Channel']] = '0'
             except KeyError: #if no close channel
                 pass
             self.PLC.updateRelayBank()
         #if we are closing the lid
         else:
-            self.PLC.relayCurrent[self.ParameterDictionary['Open Channel']] = '1'
+            self.PLC.relayCurrent[self.ParameterDictionary['Open Channel']] = '0'
             try:
-                self.PLC.relayCurrent[self.ParameterDictionary['Close Channel']] = '0'
+                self.PLC.relayCurrent[self.ParameterDictionary['Close Channel']] = '1'
             except KeyError: #if no close channel
                 pass
 
@@ -411,30 +585,40 @@ class goBetween():
         else: #don't do anything
             pass
 
-sm = ScreenManager()
-SettingsScreen = SettingsScreen('settings',ParameterDictionary)
+#Interface
+Maintenance_Screen = Maintenance_Screen('maintenance')
 MainScreen = ProcessScreen('main',ParameterDictionary)
+SelectFileScreen = FileSelectScreen('file selection',ParameterDictionary)
 
 sm.add_widget(MainScreen)
-sm.add_widget(SettingsScreen)
+sm.add_widget(Maintenance_Screen)
+sm.add_widget(SelectFileScreen)
 
 sm.current = 'main'
 
 #read from the CSV file
-df = pd.read_csv('SettingsFile.csv')
-
-#need a way to add these comports into the settings excel file....
-PLC = ArduinoMegaPLC(10)
-StepperController = ArduinoMotor(15)
+df = pd.read_csv('SettingsFile2.csv')
 
 comDic = {} #holds the comport number and the corresponding serial port object
 MFCList = [] #holds the MFC objects
 RFGenList = [] #holds RF generator objects
 BaratronList = [] #holds baratron objects
 
+GasMFCList = []
+LFCList = []
+
+
 for row in df.iterrows(): #iterate through each row of the excel file and adds in the right comonent.
     r = row[1]
-    print(r['type'])
+    print(r['type'], r['type'] == 'Pneumatic')
+
+    if r['type'] == 'ArduinoPLC':
+        PLC = ArduinoMegaPLC(int(r['Com']))
+        Maintenance_Screen.addPLC(PLC)
+
+    if r['type'] == 'ArduinoMotor':
+        StepperController = ArduinoMotor(int(r['Com']))
+
     if r['type'] == 'HoribaZ500':
         try: #check if the desired comport has been opened
             MFCconnection = comDic[r['Com']]
@@ -445,12 +629,20 @@ for row in df.iterrows(): #iterate through each row of the excel file and adds i
             comDic[r['Com']] = MFCconnection
 
         #create the MFC object
-        m = HoribaZ500(PLC,r['relay address'],MFCconnection,str(r['write address']), str(['read address']),
+        m = HoribaZ500(PLC,r['relay address'],MFCconnection,str(r['write address']), str(r['read address']),
                 r['max'],r['min'],r['slot'])
-
+        GasMFCList.append(m)
         MFCList.append(m)
         MainScreen.inputFieldList[r['slot']].setTitle(r['title'])
         MainScreen.inputFieldList[r['slot']].setMinMax(min = float(r['min']),max = float(r['max']))
+
+    if r['type'] == 'AnalogMFC':
+        m = AnalogMFC(PLC, r['relay address'],str(r['write address']), str(r['read address']),
+            r['max'],r['min'],r['slot'])
+
+        MFCList.append(m)
+        MainScreen.inputFieldList[r['slot']].setTitle(r['title'])
+        MainScreen.inputFieldList[r['slot']].setMinMax(min=float(r['min']), max=float(r['max']))
 
     if r['type'] == 'HoribaLF':
         try:
@@ -461,8 +653,9 @@ for row in df.iterrows(): #iterate through each row of the excel file and adds i
                                     parity=serial.PARITY_ODD)
             comDic[r['Com']] = MFCconnection
         #create the MFC object
-        m = HoribaLF_F(PLC,r['relay address'],MFCconnection,str(r['write address']), str(['read address']),
-                       r['max'],r['min'],r['slot'])
+        m = HoribaLF_F(PLC,r['relay address'],MFCconnection,str(r['write address']), str(r['write address']),
+                       r['max'],r['min'],r['slot'],str(r['read address']))
+        LFCList.append(m)
         MFCList.append(m)
         MainScreen.inputFieldList[r['slot']].setTitle(r['title'])
         MainScreen.inputFieldList[r['slot']].setMinMax(min = float(r['min']),max = float(r['max']))
@@ -474,6 +667,14 @@ for row in df.iterrows(): #iterate through each row of the excel file and adds i
         RFGenList.append(instrument)
         MainScreen.inputFieldList[r['slot']].setTitle(r['title'])
         MainScreen.inputFieldList[r['slot']].setMinMax(min = float(r['min']),max = float(r['max']))
+
+    if r['type'] == 'TCPower':
+        COM ='COM' + str(r['Com'])
+        instrument = TCPowerRFGenrator(port = COM, min_power=int(r['min']), max_power=int(r['max']),slot = r['slot'])
+        RFGenList.append(instrument)
+        MainScreen.inputFieldList[r['slot']].setTitle(r['title'])
+        MainScreen.inputFieldList[r['slot']].setMinMax(min = float(r['min']),max = float(r['max']))
+
 
     if r['type'] == 'Pneumatic':
         ParameterDictionary[r['title']] = int(r['relay address'])
@@ -508,19 +709,29 @@ for row in df.iterrows(): #iterate through each row of the excel file and adds i
         grindMotor = startStopArduinoMotor(r['Com'])
         ParameterDictionary['grindMotor'] = True
         ParameterDictionary['grindMotorObject'] = grindMotor
+
     else:
         ParameterDictionary['grindMotor'] = False
 
 
     if r['type'] == 'Blank':
         print(r['title'])
-        MainScreen.inputFieldList[r['slot']].setTitle(r['title'])
+        #MainScreen.inputFieldList[r['slot']].setTitle(r['title'])
 
 #need a catch in case one of the pieces of equipment is missing.
 GB2 = goBetween(MainScreen,gateValve,PLC,MFCList,BaratronList,RFGenList,StepperController,ParameterDictionary)
 
+#Threads
+'''t1 = Return_Thread(MFCcurrentRead,GasMFCList)
+t1.start()
 
-class TestApp(App):
+t2 = Return_Thread(MFCcurrentRead,LFCList)
+t2.start()'''
+
+LoadingScreen = LoadSamplePopUpLogic(ParameterDictionary,PLC,StepperController)
+sm.add_widget(LoadingScreen)
+
+class SC300App(App):
     def on_start(self):
         print("App Starting")
         self.loadSettings()
@@ -533,7 +744,7 @@ class TestApp(App):
         '''GB.programrunning = False
         time.sleep(0.25)
         GB.beforeExit()'''
-
+        t1.join()
     def build(self):
         return sm
 
@@ -547,7 +758,7 @@ class TestApp(App):
 
 
 if __name__ == '__main__':
-        TestApp().run()
+        SC300App().run()
 
 
 

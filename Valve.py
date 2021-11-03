@@ -1,6 +1,7 @@
 from __future__ import division
 import serial
 import time
+import numpy as np
 from ArduinoMegaPLC import ArduinoMegaPLC
 
 class Valve():
@@ -24,7 +25,7 @@ class Valve():
                 if self.connection.in_waiting >0:
                     rec =  str(self.connection.readline(),"utf-8").strip()
                     if rec == confirmcommand:
-                        print(rec)
+                        #print(rec)
                         break
         else:
             a = str(self.connection.readline(),"utf-8").strip()
@@ -92,7 +93,7 @@ class Valve():
         zeroAdd = 7 - len(a)
 
         a = '0'*zeroAdd + a
-        print(start+a)
+        #print(start+a)
         command = str.encode(start+a+'\r\n',"utf-8")
 
         self.connection.write(command)
@@ -170,9 +171,15 @@ class MKS153D():
                                         bytesize=serial.EIGHTBITS,stopbits = serial.STOPBITS_ONE,
                                         parity=serial.PARITY_NONE)
         self.interrupt = False
+        self.controlling = False
         self.DataDic = {}
 
+
+
         self.maxPressure = float(maxPressure)
+        self.pressure_set_point = 0
+        self.current_pressure = '0.00'
+        self.connection.write(b'D') #sets the controller to digital mode
 
     def __receivedata(self,confirm,confirmcommand):
         if confirm:
@@ -180,7 +187,6 @@ class MKS153D():
                 if self.connection.in_waiting >0:
                     rec =  str(self.connection.readline(),"utf-8").strip()
                     if rec == confirmcommand:
-                        print(rec)
                         break
         else:
 
@@ -243,18 +249,21 @@ class MKS153D():
     def setPressure(self,slot,Pressure):
         '''Sends the pressure setpoint to the valve
         Pressure should be supplied in mTorr'''
-        self.DataDic[slot]['currentSet'] = Pressure
+        #self.DataDic[slot]['currentSet'] = Pressure
 
-        start = 'S:0'
-        a = Pressure
+        self.pressure_set_point = Pressure
 
-        zeroAdd = 7 - len(a)
+        pressure_percent = (float(Pressure)/float(self.maxPressure))*100
 
-        a = '0'*zeroAdd + a
-        print(start+a)
-        command = str.encode(start+a+'\r\n',"utf-8")
+        base_command =  "S{:.1f}\r"
+        formatted_command = base_command.format(pressure_percent)
+        final_command = str.encode(formatted_command,"utf-8")
 
-        self.connection.write(command)
+        self.Open()
+        time.sleep(0.25)
+        self.connection.write(final_command)
+        time.sleep(0.25)
+        self.connection.write(b'D\r')
 
         return self.__receivedata(False,'')
 
@@ -270,15 +279,21 @@ class MKS153D():
     def getPressure(self):
         self.connection.write(b'R5\r')
         ret = self.__receivedata(False,'')
+
         ret = ret[1:]
         try:
             pressure = str(float(self.maxPressure)*float(ret)/100)
+            self.current_pressure = pressure
+
+            #print('Presssure return:',ret)
+            #print('Pressure calc:', pressure)
         except ValueError:
-            pressure = '1'
+            pressure = self.current_pressure
         return pressure  
 
     def Open(self):
         '''This function sets the valve to it's fully open position'''
+        print('open')
         self.connection.write(b'O\r')
         self.__receivedata(False,"F")
 
@@ -290,32 +305,37 @@ class MKS153D():
     def softOpen(self):
         '''This function slowly opens the gate valve as to not cause
         any damage to critical parts of of the system'''
-        #self.connection.write(b'O\r')
-        self.connection.write(b'P 10.0\r')
-        self.connection.write(b'D\r')
+        '''print('soft open')
+        self.connection.write(b'P22.5\r')
+        print('soft open...wait')
+        time.sleep(30)'''
+
+        print('soft open...wait')
+
+        '''command = 'P' + "{:.1f}".format(22.9) + '\r'
+        command = str.encode(command)
+        self.connection.write(command)
+        time.sleep(5)'''
+
+        for i in np.arange(16, 21, 0.5):
+
+            #if self.interrupt:
+            #    self.interrupt = False
+            #    break
+
+            command = 'P' + "{:.1f}".format(i) + '\r'
+            command = str.encode(command)
+            self.connection.write(command)
+            print(command)
+            time.sleep(10)
+
+
+
+        print('full open')
+        self.Open()
+
+
         #`  self.connection.write(b'O\r')
-
-
-        '''x = -400
-        step = 425 #Valve step size
-        self.connection.write(b'R:000050\r\n') #setting the initial position
-        time.sleep(5)
-        self.interrupt = False #in case it was previously interrupted.
-        while x <= 12000 and not self.interrupt:
-            if self.interrupt:
-                print("interuppted")
-                return 0
-            else: #If a command with higher priority is entered, this loop quits
-                y = '0'
-                x +=int(step)
-                command = str.encode('R:'+ (6 - len(str(x)))*y + str(x) +'\r\n')
-                self.connection.write(command) #Stepping the valve open
-                time.sleep(0.4) #break between command sets
-
-        if self.interrupt:
-            pass
-        else:
-            self.Open()#once the valve has been opened to position 12000, the valve fully opens'''
 
     def Learn(self):
         self.connection.write(b'L: 00030000\r\n')
@@ -378,10 +398,11 @@ class gateValveOnly():
     time.sleep(0.25)'''
 
 if __name__ == '__main__':
-    X = Valve(35)
-    X.Open()
-    time.sleep(2)
+    X = MKS153D(7,1000)
+    #X.Open()
     X.Close()
+    #time.sleep(5)
+    #X.Close()
     #print(X.getSensorScale())
     #time.sleep(2)
     #X.Close()
