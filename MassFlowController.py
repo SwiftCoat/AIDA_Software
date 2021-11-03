@@ -288,14 +288,16 @@ class HoribaLF_F():
             return out
 
     def turnOnPneumatic(self):
-        if self.pneumaticAddress == -1:  # if there is no pneumatic associated with the mfc
+        # Skip if no pleumatic associated with mfc
+        if self.pneumaticAddress == -1:
             return
 
         self.pneumaticController.relayCurrent[self.pneumaticAddress] = '1'
         self.pneumaticController.updateRelayBank()
 
     def turnOffPneumatic(self):
-        if self.pneumaticAddress == -1:  # if there is no pneumatic associated with the mfc
+        # Skip if no pleumatic associated with mfc
+        if self.pneumaticAddress == -1:
             return
 
         self.pneumaticController.relayCurrent[self.pneumaticAddress] = '0'
@@ -560,7 +562,7 @@ class HoribaZ500():
             return out
 
     def turnOnPneumatic(self):
-        # Skip if no pneumatic associated with MFC
+
         if self.pneumaticAddress == -1:
             return
 
@@ -568,22 +570,30 @@ class HoribaZ500():
         self.pneumaticController.updateRelayBank()
 
     def turnOffPneumatic(self):
-        if self.pneumaticAddress == -1: #if there is no pneumatic associated with the mfc
-            pass
-        else:
-            self.pneumaticController.relayCurrent[self.pneumaticAddress] = '0'
-            self.pneumaticController.updateRelayBank()
+        # Skip if no pneumatic associated with MFC
+        if self.pneumaticAddress == -1:
+            return
+
+        self.pneumaticController.relayCurrent[self.pneumaticAddress] = '0'
+        self.pneumaticController.updateRelayBank()
 
 
 class AnalogMFC():
-    def __init__(self,pneumaticController,pneumaticAddress,writeChannel,readChannel,max,min,slot):
-        '''Initialization requires that the port number of the 4-port USB to serial
-        adapter be input (A,B,C,D) to start. This will be changed to work with different
-        computers'''
+    def __init__(self,
+                 pneumaticController,
+                 pneumaticAddress,
+                 writeChannel,
+                 readChannel,
+                 max,
+                 min,
+                 slot):
+        '''Initialization requires that the port number of the 4-port USB to
+        serial adapter be input (A,B,C,D) to start. This will be changed to
+        work with different computers'''
 
         self.pneumaticController = pneumaticController  # arduino controller
         self.pneumaticAddress = pneumaticAddress
-        self.writeChannel = writeChannel  #4
+        self.writeChannel = writeChannel  # 4
         self.readChannel = readChannel  # will be the same as the write channel
         self.max = max  # float
         self.min = min  # float #5% of maximum
@@ -596,9 +606,9 @@ class AnalogMFC():
         self.currentSet = '0'
         self.on = False
 
-    def set(self,flowrate):
-        '''flowrate should be in sccm and come in the form of a string, eg '20000'
-        address should be sring in the form of '3031' '''
+    def set(self, flowrate):
+        '''flowrate should be in sccm and come in the form of a string, eg
+        '20000'. address should be sring in the form of '3031' '''
 
         self.currentSet = float(flowrate)
 
@@ -618,8 +628,8 @@ class AnalogMFC():
 
     def turnOn(self):
         voltage = 5 * (float(self.currentSet) / self.max)
-        print(self.writeChannel,voltage)
-        self.pneumaticController.changeVoltage(self.writeChannel,voltage)
+        print(self.writeChannel, voltage)
+        self.pneumaticController.changeVoltage(self.writeChannel, voltage)
 
         self.turnOnPneumatic()
         self.on = True
@@ -632,25 +642,28 @@ class AnalogMFC():
         self.on = False
 
     def turnOnPneumatic(self):
-        if self.pneumaticAddress == -1: #if there is no pneumatic associated with the mfc
-            pass
-        else:
-            self.pneumaticController.relayCurrent[self.pneumaticAddress] = '1'
-            self.pneumaticController.updateRelayBank()
+        # Skip if no pleumatic associated with mfc
+        if self.pneumaticAddress == -1:
+            return
+
+        self.pneumaticController.relayCurrent[self.pneumaticAddress] = '1'
+        self.pneumaticController.updateRelayBank()
 
     def turnOffPneumatic(self):
-        if self.pneumaticAddress == -1: #if there is no pneumatic associated with the mfc
-            pass
-        else:
-            self.pneumaticController.relayCurrent[self.pneumaticAddress] = '0'
-            self.pneumaticController.updateRelayBank()
+        # Skip if no pleumatic associated with mfc
+        if self.pneumaticAddress == -1:
+            return
+
+        self.pneumaticController.relayCurrent[self.pneumaticAddress] = '0'
+        self.pneumaticController.updateRelayBank()
 
 
-    #'@01\x02RFV\x03q'
+if __name__ == '__main__':
+    # '@01\x02RFV\x03q'
     print(0x61)
     PLC = ArduinoMegaPLC(3)
 
-    M = AnalogMFC(PLC,11, 0, 4, 5, 0, 8)
+    M = AnalogMFC(PLC, 11, 0, 4, 5, 0, 8)
     M.set(3.3)
     M.turnOn()
     time.sleep(5)
