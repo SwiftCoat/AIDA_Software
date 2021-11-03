@@ -5,6 +5,7 @@ import binascii
 import codecs
 from ArduinoMegaPLC import ArduinoMegaPLC
 
+
 class MassFlowController():
     def __init__(self):
         self.port = 'str number'
@@ -13,40 +14,54 @@ class MassFlowController():
         self.writeChannel = ''
         self.max = 'float'
         self.min = 'float'
+
     def turnOn(self):
         pass
+
     def turnOFf(self):
         pass
+
     def set(self):
         pass
+
     def read(self):
         pass
 
 
 class HoribaLF_F():
-    groupOn = False #global class variable to determine if any other MFCs are on.
     '''This item requires a RS-232 to 485 converter'''
-    def __init__(self,pneumaticController,pneumaticAddress,connection,writeChannel,readChannel,max,min,slot):
-        '''Initialization requires that the port number of the 4-port USB to serial
-        adapter be input (A,B,C,D) to start. This will be changed to work with different
-        computers'''
 
-        #Makes sure that the program doesn't crash if the serial is not connected
+    # Global class variable to determine if any other MFCs are on
+    groupOn = False
+
+    def __init__(self,
+                 pneumaticController,
+                 pneumaticAddress,
+                 connection,
+                 writeChannel,
+                 readChannel,
+                 max,
+                 min,
+                 slot):
+        '''Initialization requires that the port number of the 4-port USB to
+        serial adapter be input (A,B,C,D) to start. This will be changed to
+        work with different computers'''
+
+        # Don't crash if serial not connected
         try:
             self.connection = connection
             self.connected = True
         except SerialException:
             self.connected = False
 
-
-        self.pneumaticController = pneumaticController #arduino controller
+        self.pneumaticController = pneumaticController  # arduino controller
         self.pneumaticAddress = pneumaticAddress
-        self.writeChannel = writeChannel #4 digit string (3031)
-        self.readChannel = readChannel   #will be the same as the write channel
-        self.max = max                   #float
-        self.min = min                   #float #5% of maximum
+        self.writeChannel = writeChannel  # 4 digit string (3031)
+        self.readChannel = readChannel  # will be the same as the write channel
+        self.max = max  # float
+        self.min = min  # float #5% of maximum
         self.slot = slot
-        #add in arduino with the relay addresses for pneumatics.
+        # add in arduino with the relay addresses for pneumatics.
 
         self.DataDic = {}
 
@@ -54,61 +69,58 @@ class HoribaLF_F():
         self.currentSet = '0'
         self.on = False
 
-
-    def checksum(self,command):
+    def checksum(self, command):
         stringCommand = command
         sumOfBits = 0
         for i in stringCommand:
-            '''converts each character in string command to hex, then that hex value into
-             the an integer and sums them all together'''
-            i =  ' '.join(format(ord(x), 'b') for x in i)
-            i = int(i,2)
-            sumOfBits+= i
+            '''converts each character in string command to hex, then that hex
+            value into the an integer and sums them all together'''
+            i = ' '.join(format(ord(x), 'b') for x in i)
+            i = int(i, 2)
+            sumOfBits += i
 
-        sumOfBits +=3 #adding the EXT bit
-        #need to add feature to catch if CS is a special character.
-        return format(sumOfBits%128, '#04x')[2:]
+        sumOfBits += 3  # adding the EXT bit
+        # need to add feature to catch if CS is a special character.
+        return format(sumOfBits % 128, '#04x')[2:]
 
-    def parsereturn(self,ret):
-        response = ''
-        catch = 0
+    def parsereturn(self, ret):
         s = ''
         r = ''
-        flag = 0
+        flag = False
 
         for a in str(ret):
-            s = s+a
+            s += a
 
             if flag:
                 if a == '\'':
                     break
-                r = r+a
+                r += a
 
             if '\\x02' in s:
-                flag = 1
+                flag = True
 
         return r
 
-    def set(self,flowrate):
-        '''flowrate should be in sccm and come in the form of a string, eg '20000'
-        address should be sring in the form of '3031' '''
+    def set(self, flowrate):
+        '''flowrate should be in sccm and come in the form of a string, eg
+        '20000' address should be sring in the form of '3031' '''
 
         if not self.connected:
             return '-1'
 
         self.currentSet = flowrate
 
-        command = 'AFC' + str(flowrate) + ',a' #command for setting the flowrate 'B' represents SCCM
+        # command for setting the flowrate 'B' represents SCCM
+        command = 'AFC' + str(flowrate) + ',a'
 
         checkSum = self.checksum(command)
-        #forming the whole command in format @ + address + STX + commad + ETC + BCC
-        command =  '40' + self.writeChannel  + '02' + str(binascii.hexlify(str.encode(command,"utf-8")),"utf-8") + '03' + checkSum
+        # forming command as @ + address + STX + commad + ETC + BCC
+        command = '40' + self.writeChannel + '02' \
+            + str(binascii.hexlify(str.encode(command, "utf-8")), "utf-8") \
+            + '03' + checkSum
 
-        command = codecs.decode(str.encode(command,"utf-8"),"hex")
-
-        ret = self.sendCommand(command)
-
-        return ret
+        command = codecs.decode(str.encode(command, "utf-8"), "hex")
+        return self.sendCommand(command)
 
     def readFullScaleFlowRate(self):
 
@@ -117,46 +129,53 @@ class HoribaLF_F():
 
         '''RFS. Returns a string of the maximum flowrate that can be set'''
         # 52 46 53
-        command = 'RFS' #RFS
+        command = 'RFS'  # RFS
         checkSum = self.checksum(command)
-        command  = '40' + self.writeChannel + '02' + str(binascii.hexlify(str.encode(command,"utf-8")),"utf-8") + '03' + checkSum
-        command = codecs.decode(str.encode(command,"utf-8"),"hex")
-
+        command = '40' + self.writeChannel + '02' \
+            + str(binascii.hexlify(str.encode(command, "utf-8")), "utf-8") \
+            + '03' + checkSum
+        command = codecs.decode(str.encode(command, "utf-8"), "hex")
         return self.sendCommand(command)
 
     def reconnect(self):
         command = '15'
         checkSum = self.checksum(command)
-        command  = '40' + self.writeChannel + '02' + str(binascii.hexlify(str.encode(command,"utf-8")),"utf-8") + '03' + checkSum
+        command = '40' + self.writeChannel + '02' \
+            + str(binascii.hexlify(str.encode(command, "utf-8")), "utf-8") \
+            + '03' + checkSum
 
-        a = codecs.decode(str.encode(command,"utf-8"),"hex")
-        ret = self.sendCommand(a)
+        a = codecs.decode(str.encode(command, "utf-8"), "hex")
+        return self.sendCommand(a)
 
     def reconnect2(self):
         command = '06'
         checkSum = self.checksum(command)
-        command  = '40' + self.writeChannel + '02' + str(binascii.hexlify(str.encode(command,"utf-8")),"utf-8") + '03' + checkSum
+        command = '40' + self.writeChannel + '02' \
+            + str(binascii.hexlify(str.encode(command, "utf-8")), "utf-8") \
+            + '03' + checkSum
 
-        a = codecs.decode(str.encode(command,"utf-8"),"hex")
-        ret = self.sendCommand(a)
+        a = codecs.decode(str.encode(command, "utf-8"), "hex")
+        return self.sendCommand(a)
 
     def read(self):
 
         if not self.connected:
             return '-1'
 
-        command = 'RFV' #RFV
+        command = 'RFV'  # RFV
         checkSum = self.checksum(command)
 
-        command  = '40' + self.writeChannel + '02' + str(binascii.hexlify(str.encode(command,"utf-8")),"utf-8") + '03' + checkSum
-        a = codecs.decode(str.encode(command,"utf-8"),"hex")
+        command = '40' + self.writeChannel + '02' \
+            + str(binascii.hexlify(str.encode(command, "utf-8")), "utf-8") \
+            + '03' + checkSum
+        a = codecs.decode(str.encode(command, "utf-8"), "hex")
         ret = self.sendCommand(a)
         ret = "{0:.2f}".format(float(ret))
 
         self.currentRead = ret
         return ret
 
-    def sendCommand(self,command):
+    def sendCommand(self, command):
 
         if not self.connected:
             return '-1'
@@ -174,133 +193,141 @@ class HoribaLF_F():
             elapsed = time.time() - start
             if elapsed > 1.5:
                 print("Digital MFCs not Responding")
-                badCount +=1
-
-                #print(ret)
+                badCount += 1
+                # print(ret)
                 return '-1'
-            #print('MFC Digital send command',command)
-            #print(command)
+            # print('MFC Digital send command',command)
+            # print(command)
 
-            if self.connection.in_waiting >0:
+            if self.connection.in_waiting > 0:
                 a = self.connection.read()
 
                 if a == b'\x03':
-                    while self.connection.in_waiting >0:
-                        b = self.connection.read()
+                    while self.connection.in_waiting > 0:
+                        _ = self.connection.read()
 
                     flag = 0
 
                 else:
-                    ret = ret+a
+                    ret += a
 
-        ret = self.parsereturn(ret)
-
-        return ret
+        return self.parsereturn(ret)
 
     def readSetFlowRate(self):
         if not self.connected:
             return '-1'
-        command = 'RFC' #RFC
+        command = 'RFC'  # RFC
         checkSum = self.checksum(command)
-        command  = '40' + self.writeChannel + '02' + str(binascii.hexlify(str.encode(command,"utf-8")),"utf-8") + '03' + checkSum
-        command = codecs.decode(str.encode(command,"utf-8"),"hex")
-
+        command = '40' + self.writeChannel + '02' \
+            + str(binascii.hexlify(str.encode(command, "utf-8")), "utf-8") \
+            + '03' + checkSum
+        command = codecs.decode(str.encode(command, "utf-8"), "hex")
         return self.sendCommand(command)
 
     def turnOn(self):
         if not self.connected:
             return '-1'
 
-        command = 'IAC' #RFC
+        command = 'IAC'  # RFC
         checkSum = self.checksum(command)
-        command  = '40' + self.writeChannel + '02' + str(binascii.hexlify(str.encode(command,"utf-8")),"utf-8") + '03' + checkSum
-        command = codecs.decode(str.encode(command,"utf-8"),"hex")
+        command = '40' + self.writeChannel + '02' \
+            + str(binascii.hexlify(str.encode(command, "utf-8")), "utf-8") \
+            + '03' + checkSum
+        command = codecs.decode(str.encode(command, "utf-8"), "hex")
         self.connection.write(command)
         self.turnOnPneumatic()
         self.on = True
-        #update the pneumatic
+        # update the pneumatic
 
         return self.sendCommand(command)
 
     def turnOff(self):
         if not self.connected:
             return '-1'
-        command = 'MVC' #RFC
+        command = 'MVC'  # RFC
         checkSum = self.checksum(command)
-        command  = '40' + self.writeChannel + '02' + str(binascii.hexlify(str.encode(command,"utf-8")),"utf-8") + '03' + checkSum
-        command = codecs.decode(str.encode(command,"utf-8"),"hex")
+        command = '40' + self.writeChannel + '02' \
+            + str(binascii.hexlify(str.encode(command, "utf-8")), "utf-8") \
+            + '03' + checkSum
+        command = codecs.decode(str.encode(command, "utf-8"), "hex")
 
         self.turnOffPneumatic()
         self.connection.write(command)
         self.on = False
-        #turn the pneumatic off
+        # turn the pneumatic off
 
         return self.sendCommand(command)
 
     def readValveControlMode(self):
         if not self.connected:
             return '-1'
-        command = 'RVM' #RFC
+        command = 'RVM'  # RFC
         checkSum = self.checksum(command)
-        command  = '40' + self.writeChannel + '02' + command.encode('hex') + '03' + checkSum
+        command = '40' + self.writeChannel + '02' \
+            + command.encode('hex') + '03' + checkSum
         command = command.decode('hex')
         ret = self.__Receive_Data(command)
 
         return self.parsereturn(ret)
 
-    def __Receive_Data(self,command):
-        '''This sends a command to the baratron and returns a value if good, or -1 if
-        a time out situation'''
+    def __Receive_Data(self, command):
+        '''This sends a command to the baratron and returns a value if good
+        or -1 if timeout'''
 
         while True:
-
             self.connection.write(command)
             time.sleep(0.1)
 
             out = ''
-            while self.connection.inWaiting() >0:
-                incoming  = self.connection.read()
-                out+=incoming
+            while self.connection.inWaiting() > 0:
+                incoming = self.connection.read()
+                out += incoming
 
             return out
 
     def turnOnPneumatic(self):
-
         self.pneumaticController.relayCurrent[self.pneumaticAddress] = '0'
         self.pneumaticController.updateRelayBank()
 
-
     def turnOffPneumatic(self):
-
         self.pneumaticController.relayCurrent[self.pneumaticAddress] = '1'
         self.pneumaticController.updateRelayBank()
 
 
 class HoribaZ500():
 
-    groupOn = False #global class variable to determine if any other MFCs are on.
+    # global class variable to determine if any other MFCs are on.
+    groupOn = False
     '''This item requires a RS-232 to 485 converter'''
-    def __init__(self,pneumaticController,pneumaticAddress,connection,writeChannel,readChannel,max,min,slot):
-        '''Initialization requires that the port number of the 4-port USB to serial
-        adapter be input (A,B,C,D) to start. This will be changed to work with different
-        computers'''
 
-        #Makes sure that the program doesn't crash if the serial is not connected
+    def __init__(self,
+                 pneumaticController,
+                 pneumaticAddress,
+                 connection,
+                 writeChannel,
+                 readChannel,
+                 max,
+                 min,
+                 slot):
+        '''Initialization requires that the port number of the 4-port USB to
+        serial adapter be input (A,B,C,D) to start. This will be changed to
+        work with different computers'''
+
+        # Don't crash if the serial is not connected
         try:
             self.connection = connection
             self.connected = True
         except SerialException:
             self.connected = False
 
-
-        self.pneumaticController = pneumaticController #arduino controller
+        self.pneumaticController = pneumaticController  # arduino controller
         self.pneumaticAddress = pneumaticAddress
-        self.writeChannel = writeChannel #4 digit string (3031)
-        self.readChannel = readChannel   #will be the same as the write channel
-        self.max = max                   #float
-        self.min = min                   #float #5% of maximum
+        self.writeChannel = writeChannel  # 4 digit string (3031)
+        self.readChannel = readChannel  # will be the same as the write channel
+        self.max = max  # float
+        self.min = min  # float #5% of maximum
         self.slot = slot
-        #add in arduino with the relay addresses for pneumatics.
+        # add in arduino with the relay addresses for pneumatics
 
         self.DataDic = {}
 
@@ -308,61 +335,57 @@ class HoribaZ500():
         self.currentSet = '0'
         self.on = False
 
-
-    def checksum(self,command):
+    def checksum(self, command):
         stringCommand = command
         sumOfBits = 0
         for i in stringCommand:
-            '''converts each character in string command to hex, then that hex value into
-             the an integer and sums them all together'''
-            i =  ' '.join(format(ord(x), 'b') for x in i)
-            i = int(i,2)
-            sumOfBits+= i
+            '''converts each character in string command to hex, then that hex
+            value into an integer and sums them all together'''
+            i = ' '.join(format(ord(x), 'b') for x in i)
+            i = int(i, 2)
+            sumOfBits += i
 
-        sumOfBits +=3 #adding the EXT bit
-        #need to add feature to catch if CS is a special character.
-        return format(sumOfBits%128, '#04x')[2:]
+        sumOfBits += 3  # adding the EXT bit
+        # catch if CS is a special character
+        return format(sumOfBits % 128, '#04x')[2:]
 
-    def parsereturn(self,ret):
-        response = ''
-        catch = 0
+    def parsereturn(self, ret):
         s = ''
         r = ''
         flag = 0
 
         for a in str(ret):
-            s = s+a
+            s += a
 
             if flag:
                 if a == '\'':
                     break
-                r = r+a
+                r += a
 
             if '\\x02' in s:
                 flag = 1
 
         return r
 
-    def set(self,flowrate):
-        '''flowrate should be in sccm and come in the form of a string, eg '20000'
-        address should be sring in the form of '3031' '''
+    def set(self, flowrate):
+        '''flowrate should be in sccm and come in the form of a string, eg
+        '20000'. address should be sring in the form of '3031' '''
 
         if not self.connected:
             return '-1'
 
         self.currentSet = flowrate
 
-        command = 'AFC' + str(flowrate) + ',B' #command for setting the flowrate 'B' represents SCCM
+        # command for setting the flowrate 'B' represents SCCM
+        command = f'AFC{flowrate},B'
 
         checkSum = self.checksum(command)
-        #forming the whole command in format @ + address + STX + commad + ETC + BCC
-        command =  '40' + self.writeChannel  + '02' + str(binascii.hexlify(str.encode(command,"utf-8")),"utf-8") + '03' + checkSum
-
-        command = codecs.decode(str.encode(command,"utf-8"),"hex")
-
-        ret = self.sendCommand(command)
-
-        return ret
+        # forming command as @ + address + STX + commad + ETC + BCC
+        command = '40' + self.writeChannel + '02' \
+            + str(binascii.hexlify(str.encode(command, "utf-8")), "utf-8") \
+            + '03' + checkSum
+        command = codecs.decode(str.encode(command, "utf-8"), "hex")
+        return self.sendCommand(command)
 
     def readFullScaleFlowRate(self):
 
@@ -371,47 +394,52 @@ class HoribaZ500():
 
         '''RFS. Returns a string of the maximum flowrate that can be set'''
         # 52 46 53
-        command = 'RFS' #RFS
+        command = 'RFS'  # RFS
         checkSum = self.checksum(command)
-        command  = '40' + self.writeChannel + '02' + str(binascii.hexlify(str.encode(command,"utf-8")),"utf-8") + '03' + checkSum
-        command = codecs.decode(str.encode(command,"utf-8"),"hex")
-
+        command = '40' + self.writeChannel + '02' \
+            + str(binascii.hexlify(str.encode(command, "utf-8")), "utf-8") \
+            + '03' + checkSum
+        command = codecs.decode(str.encode(command, "utf-8"), "hex")
         return self.sendCommand(command)
 
     def reconnect(self):
         command = '15'
         checkSum = self.checksum(command)
-        command  = '40' + self.writeChannel + '02' + str(binascii.hexlify(str.encode(command,"utf-8")),"utf-8") + '03' + checkSum
+        command = '40' + self.writeChannel + '02' \
+            + str(binascii.hexlify(str.encode(command, "utf-8")), "utf-8") \
+            + '03' + checkSum
 
-        a = codecs.decode(str.encode(command,"utf-8"),"hex")
-        ret = self.sendCommand(a)
+        a = codecs.decode(str.encode(command, "utf-8"), "hex")
+        return self.sendCommand(a)
 
     def reconnect2(self):
         command = '06'
         checkSum = self.checksum(command)
-        command  = '40' + self.writeChannel + '02' + str(binascii.hexlify(str.encode(command,"utf-8")),"utf-8") + '03' + checkSum
+        command = '40' + self.writeChannel + '02' + \
+            str(binascii.hexlify(str.encode(command, "utf-8")),
+                "utf-8") + '03' + checkSum
 
-        a = codecs.decode(str.encode(command,"utf-8"),"hex")
-        ret = self.sendCommand(a)
+        a = codecs.decode(str.encode(command, "utf-8"), "hex")
+        return self.sendCommand(a)
 
     def read(self):
-
         if not self.connected:
             return '-1'
 
-        command = 'RFV' #RFV
+        command = 'RFV'  # RFV
         checkSum = self.checksum(command)
 
-        command  = '40' + self.writeChannel + '02' + str(binascii.hexlify(str.encode(command,"utf-8")),"utf-8") + '03' + checkSum
-        a = codecs.decode(str.encode(command,"utf-8"),"hex")
+        command = '40' + self.writeChannel + '02' \
+            + str(binascii.hexlify(str.encode(command, "utf-8")), "utf-8") \
+            + '03' + checkSum
+        a = codecs.decode(str.encode(command, "utf-8"), "hex")
         ret = self.sendCommand(a)
         ret = "{0:.2f}".format(float(ret))
 
         self.currentRead = ret
         return ret
 
-    def sendCommand(self,command):
-
+    def sendCommand(self, command):
         if not self.connected:
             return '-1'
 
@@ -427,37 +455,37 @@ class HoribaZ500():
         while flag:
             elapsed = time.time() - start
             if elapsed > 1.5:
-                print("Z500 Digital MFCs not Responding: " + str(self.slot))
-                badCount +=1
+                print(f"Z500 Digital MFCs not Responding: {self.slot}")
+                badCount += 1
 
-                #print(ret)
+                # print(ret)
                 return '-1'
-            #print('MFC Digital send command',command)
-            #print(command)
+            # print('MFC Digital send command',command)
+            # print(command)
 
-            if self.connection.in_waiting >0:
+            if self.connection.in_waiting > 0:
                 a = self.connection.read()
 
                 if a == b'\x03':
-                    while self.connection.in_waiting >0:
-                        b = self.connection.read()
+                    while self.connection.in_waiting > 0:
+                        _ = self.connection.read()
 
                     flag = 0
 
                 else:
-                    ret = ret+a
+                    ret += a
 
-        ret = self.parsereturn(ret)
-
-        return ret
+        return self.parsereturn(ret)
 
     def readSetFlowRate(self):
         if not self.connected:
             return '-1'
-        command = 'RFC' #RFC
+        command = 'RFC'  # RFC
         checkSum = self.checksum(command)
-        command  = '40' + self.writeChannel + '02' + str(binascii.hexlify(str.encode(command,"utf-8")),"utf-8") + '03' + checkSum
-        command = codecs.decode(str.encode(command,"utf-8"),"hex")
+        command = '40' + self.writeChannel + '02' \
+            + str(binascii.hexlify(str.encode(command, "utf-8")), "utf-8") \
+            + '03' + checkSum
+        command = codecs.decode(str.encode(command, "utf-8"), "hex")
 
         return self.sendCommand(command)
 
@@ -465,46 +493,51 @@ class HoribaZ500():
         if not self.connected:
             return '-1'
 
-        command = 'IAC' #RFC
+        command = 'IAC'  # RFC
         checkSum = self.checksum(command)
-        command  = '40' + self.writeChannel + '02' + str(binascii.hexlify(str.encode(command,"utf-8")),"utf-8") + '03' + checkSum
-        command = codecs.decode(str.encode(command,"utf-8"),"hex")
+        command = '40' + self.writeChannel + '02' \
+            + str(binascii.hexlify(str.encode(command, "utf-8")), "utf-8") \
+            + '03' + checkSum
+        command = codecs.decode(str.encode(command, "utf-8"), "hex")
         self.connection.write(command)
         self.turnOnPneumatic()
         self.on = True
-        #update the pneumatic
+        # update the pneumatic
 
         return self.sendCommand(command)
 
     def turnOff(self):
         if not self.connected:
             return '-1'
-        command = 'MVC' #RFC
+        command = 'MVC'  # RFC
         checkSum = self.checksum(command)
-        command  = '40' + self.writeChannel + '02' + str(binascii.hexlify(str.encode(command,"utf-8")),"utf-8") + '03' + checkSum
-        command = codecs.decode(str.encode(command,"utf-8"),"hex")
+        command = '40' + self.writeChannel + '02' \
+            + str(binascii.hexlify(str.encode(command, "utf-8")), "utf-8") \
+            + '03' + checkSum
+        command = codecs.decode(str.encode(command, "utf-8"), "hex")
 
         self.turnOffPneumatic()
         self.connection.write(command)
         self.on = False
-        #turn the pneumatic off
+        # turn the pneumatic off
 
         return self.sendCommand(command)
 
     def readValveControlMode(self):
         if not self.connected:
             return '-1'
-        command = 'RVM' #RFC
+        command = 'RVM'  # RFC
         checkSum = self.checksum(command)
-        command  = '40' + self.writeChannel + '02' + command.encode('hex') + '03' + checkSum
+        command = '40' + self.writeChannel + '02' \
+            + command.encode('hex') + '03' + checkSum
         command = command.decode('hex')
         ret = self.__Receive_Data(command)
 
         return self.parsereturn(ret)
 
-    def __Receive_Data(self,command):
-        '''This sends a command to the baratron and returns a value if good, or -1 if
-        a time out situation'''
+    def __Receive_Data(self, command):
+        '''This sends a command to the baratron and returns a value if good,
+        or -1 if timeout'''
 
         while True:
 
@@ -512,46 +545,45 @@ class HoribaZ500():
             time.sleep(0.1)
 
             out = ''
-            while self.connection.inWaiting() >0:
-                incoming  = self.connection.read()
-                out+=incoming
+            while self.connection.inWaiting() > 0:
+                incoming = self.connection.read()
+                out += incoming
 
             return out
 
     def turnOnPneumatic(self):
-        if self.pneumaticAddress == -1: #if there is no pneumatic associated with the mfc
-            pass
-        else:
-            self.pneumaticController.relayCurrent[self.pneumaticAddress] = '0'
-            self.pneumaticController.updateRelayBank()
+        # Skip if no pneumatic associated with MFC
+        if self.pneumaticAddress == -1:
+            return
 
+        self.pneumaticController.relayCurrent[self.pneumaticAddress] = '0'
+        self.pneumaticController.updateRelayBank()
 
     def turnOffPneumatic(self):
-        if self.pneumaticAddress == -1: #if there is no pneumatic associated with the mfc
-            pass
-        else:
-            self.pneumaticController.relayCurrent[self.pneumaticAddress] = '1'
-            self.pneumaticController.updateRelayBank()
+        # Skip if no pneumatic associated with MFC
+        if self.pneumaticAddress == -1:
+            return
+
+        self.pneumaticController.relayCurrent[self.pneumaticAddress] = '1'
+        self.pneumaticController.updateRelayBank()
 
 
 if __name__ == '__main__':
-
-        #'@01\x02RFV\x03q'
+    # '@01\x02RFV\x03q'
     print(0x61)
     PLC = ArduinoMegaPLC(8)
-    MFCconnection = serial.Serial(port= 'COM'+str(21),baudrate=38400,
-                                    bytesize=serial.SEVENBITS,stopbits = serial.STOPBITS_ONE,
-                                    parity=serial.PARITY_ODD)
+    MFCconnection = serial.Serial(port='COM21',
+                                  baudrate=38400,
+                                  bytesize=serial.SEVENBITS,
+                                  stopbits=serial.STOPBITS_ONE,
+                                  parity=serial.PARITY_ODD)
 
-
-    M = HoribaZ500(PLC,4,MFCconnection,'3031','3031',0,1000,1)
+    M = HoribaZ500(PLC, 4, MFCconnection, '3031', '3031', 0, 1000, 1)
 
     while True:
-        '''print(M.reconnect())
-        time.sleep(0.1)
-        print(M.reconnect2())
-        time.sleep(0.3)'''
+        # print(M.reconnect())
+        # time.sleep(0.1)
+        # print(M.reconnect2())
+        # time.sleep(0.3)
         print(M.read())
         time.sleep(0.1)
-
-
